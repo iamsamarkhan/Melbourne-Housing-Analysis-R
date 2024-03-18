@@ -1,0 +1,589 @@
+---
+title: "2nd Assignment BDA"
+author: "Samar Khan"
+date: "2022-12-01"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loaded All the required Library.
+
+```{r}
+library(dplyr)
+library(readr)
+library(Metrics)
+library(GGally)
+library(C50)
+library(mlbench)
+library(lattice)
+library(gower)
+library(ggplot2)
+library(gtable)
+library(caret)
+library(boot)# used for the using glm function for k-fold validation
+library(neuralnet) # librarty used for neural network (ANN)
+
+```
+
+## Reading the given Data set
+
+```{r cars}
+housing.dataset_melbourne <- read.csv("/Users/samarkhan/Downloads/melbourne_housing_data.csv",
+                                      stringsAsFactors = TRUE)
+str(housing.dataset_melbourne)
+
+summary(housing.dataset_melbourne)
+
+# changing to date format
+housing.dataset_melbourne$Date<-as.Date(housing.dataset_melbourne$Date,format="%y/%m/%d") 
+```
+
+## Exploring the data-set
+
+-   **Removing the Outliers**
+
+```{r}
+#Price variable with  Outliers present
+boxplot(housing.dataset_melbourne$Price, col = "blue", main="With Outliers") 
+housing.dataset_melbourne1<-data.frame(housing.dataset_melbourne)
+housing.dataset_melbourne1<-housing.dataset_melbourne1[-1]#droping the index collum
+Q3_price = quantile(housing.dataset_melbourne1$Price,0.65)# gives the 3rd quantile value
+Q1_price = quantile(housing.dataset_melbourne1$Price,0.25)# gives the 1rd quantile value
+IQR=IQR(housing.dataset_melbourne1$Price)
+#Removing outliers in Price attribute###
+housing.dataset_melbourne1<-subset(housing.dataset_melbourne1,
+                          housing.dataset_melbourne1$Price>(Q1_price-IQR)& 
+                          housing.dataset_melbourne1$Price<(Q3_price+1.5*IQR))
+
+# Price variable without  Outliers present
+boxplot(housing.dataset_melbourne1$Price, col ="lightblue", main="Without Outliers") 
+nrow(housing.dataset_melbourne1)# printing the no of rows after rmoving outlier
+```
+
+-   ***Representation of the different types of house- Using pie chart***
+
+```{r pressure }
+ 
+# calculating TYPE collumn percentage no of occurance  for a particular type. 
+Pie_chartBy_Type<-housing.dataset_melbourne1 %>% count(Type) %>% arrange(desc(Type)) %>%
+  mutate(Percentage=n/sum(n)*100,pos_of_pie=round(cumsum(Percentage)-0.5*Percentage,2))
+#For creating the pie chart by using ggplot and coord_polar funtion and adding the title  
+ggplot(data=Pie_chartBy_Type)+ geom_col(aes(x="",y=Percentage,fill=Type)) +
+coord_polar(theta = "y")+
+geom_text(aes(x="",y=pos_of_pie,label=scales::percent(Percentage,scale=1)))+
+  ggtitle("Pie-Chart: Percentage Distribution of Different Type of House")
+```
+
+-   ***Exploring the Price of the houses in the given data set-using Histogram also showing the mean***
+
+    ***median and standard Deviation***
+
+```{r}
+
+Mean_Price<- round(mean(housing.dataset_melbourne1$Price),1)
+Median_Price<-median(housing.dataset_melbourne1$Price)
+StdDev_Price<-round(sd(housing.dataset_melbourne1$Price),1)
+#ploting the histogram of price coloumn and adding the mean,median, mode value and x-intercept
+Histogram_Price<-ggplot(data = housing.dataset_melbourne1, aes(x=Price)) +        
+geom_histogram(fill="yellowgreen",col="BLACK") +
+geom_vline(aes(xintercept=Mean_Price,color='mean'),show.legend = TRUE, linewidth=2)  +
+geom_vline(aes(xintercept=Median_Price,color='median'),show.legend = TRUE,linewidth=1.5) +
+annotate("text",x=1500000,y=3000,label=paste0("Mean =",Mean_Price))+
+annotate("text",x=1500000,y=2700,label=paste0("Median =",Median_Price))+
+annotate("text",x=1500000,y=2400,label=paste0("Standard Deviation =",StdDev_Price))+
+labs(x="Price in Australian Dollar",y="Frequency",title = "Histogram- Price Ranges of Houses")
+
+print(Histogram_Price)
+# gives the desity graph to check if data 
+plot(density(housing.dataset_melbourne1$Price))
+# to check if normally distributed
+qqnorm(housing.dataset_melbourne1$Price)
+qqline(housing.dataset_melbourne1$Price)#quantile quantile plot tocheck if data 
+#is normally distibuted
+summary(housing.dataset_melbourne1$Price) 
+```
+
+## Task 1
+
+### Hypotheses Testing
+
+**1.** **Testing if the average value of the house price in Melbourne is \$ 884864**
+
+**that means on the sample data set. we will be using one sample test.**
+
+**H0 is equals to \$884864 (Null hypotheses)**
+
+**Ha is not equals to \$884864 (Alternate Hypotheses)**
+
+```{r}
+
+#taking the 40 sample data- from the price collumn.
+set.seed(101)  # setting the seed for sample data
+Price_sample <- data.frame(sample(housing.dataset_melbourne1$Price, 40))
+#taking renaming the sample price collumn name
+Price_sample<-Price_sample %>% rename(Sample_price=sample.housing.dataset_melbourne1.Price..40.)
+
+# Boxplot for the sample price
+boxplot(Price_sample$Sample_price)
+# Draw  probabilities plot
+plot(density(Price_sample$Sample_price)) # gives the desity graph to check if data is normally 
+
+# quantile quantile plot tocheck if data is normally distibuted
+qqnorm(Price_sample$Sample_price)
+qqline(Price_sample$Sample_price)
+
+```
+
+**As shown below clearly we can significance level is 5% T-statistic or t value is in negative and the P-value is greater than 0.5 we are rejecting the Alternate Hypotheses with the standard error of 5%.**
+
+```{r}
+t.test(Price_sample$Sample_price,mu=884864)
+```
+
+**2.** **Test if the different region have same average mean number of rooms in the Melbourne data-set. using the concept of ANOVA.**
+
+**H0 = mean number of room in different region are same.**
+
+**H1 != mean number of room in different region are not same.**
+
+```{r}
+#creating the new data set or sub seting for different region and no of rooms
+Rooms_Region<-data.frame(housing.dataset_melbourne1%>%
+                           filter(Regionname %in%c("Northern Metropolitan",
+        "Southern Metropolitan","Western Metropolitan","Eastern Metropolitan"))
+                         %>%select(Rooms,Regionname))
+head(Rooms_Region) # printing the result
+
+
+
+
+```
+
+```{r}
+#box plot to understand the distribution of rooms in diffrent region
+boxplot(Rooms_Region$Rooms~Rooms_Region$Regionname)
+```
+
+**We know when we need to compare more than 2 means we use ANOVA concept . As shown below since the p-value is very less hence we can confirm that or we reject the Null hypothesis**
+
+```{r}
+Rooms_Region %>%aov(Rooms~Regionname,data = .) %>% summary()
+```
+
+**As shown below non of them include zero in its lower and upper limit and does not have possibility of have no difference at all and the p value is zero so we reject the Null hypothesis**
+
+```{r}
+#code for honestly significant difference for diffrent region with each other
+Rooms_Region %>%aov(Rooms~Regionname,data = .) %>% TukeyHSD() 
+
+
+```
+
+**3** **Testing if the mean price value of the house type h and t are same or not (two sample t-test).**
+
+**H0=\> mean price value of h type house=mean price value of t type house.**
+
+**H1=\>mean price value of h type house !=mean price value of t type house.**
+
+```{r}
+set.seed(101)
+Price_T_Type<-subset(housing.dataset_melbourne1,Type=='t')# subset on type T
+Price_T_Type_Sample<-sample(Price_T_Type$Price,40)# taking the sample
+Price_h_Type<-subset(housing.dataset_melbourne1,Type=='h')# subset on type H
+Price_H_Type_Sample<-sample(Price_h_Type$Price,40)#taking the sample
+boxplot(Price_H_Type_Sample,Price_T_Type_Sample) # ceratinthe pox plot for the same
+
+```
+
+**As two groups are involved we are using 2 sample t test. As shown below t value is in negative and P value is ver less so we reject the Null hypotheses at 95% confidence**
+
+```{r}
+#performing the t-test on price variable
+t.test(Price_H_Type_Sample,Price_T_Type_Sample,var.equal = T)
+```
+
+## Task B
+
+#### Divide the data-set into training and test.
+
+**We will be using caret library to divide the data set for training the model and the for testing the model. The `createDataPartition` function from caret package generates a stratified random split of the data.**
+
+```{r}
+
+set.seed(101)
+
+# spliting the data with createDataPartition for 75:25 ratio
+TrainingVariable <- createDataPartition(housing.dataset_melbourne1$Price, p= 0.75, list = F,
+                                     times = 1)
+#creating an new traning data set
+Training_Data<-housing.dataset_melbourne1[TrainingVariable,]
+
+#creating an new testing data set
+Testing_Data<-housing.dataset_melbourne1[-TrainingVariable,]
+
+#validating the training data by diffrent type of house
+table(Training_Data$Type)
+
+#validating the training data by diffrent types of house
+table(Testing_Data$Type)
+```
+
+### **Perform the linear regression with multiple variable the house price.**
+
+**As we know in multiple variable linear regression we have several predictor variables and a response variable. we wish to run a linear regression on the data because you think there is a linear relationship between the predictors and the result. As shown below the p value is very low.**
+
+```{r}
+print(" ")
+```
+
+#### NON-Normalized Linear model for price
+
+```{r}
+#lm function used for linear model
+#making  linear model for price variable excluding the address variable
+# taking the predictor variable based on the corplot i.e higher correlation with price
+
+Price_Linear_model<-lm(Price ~ Rooms+Postcode+Propertycount+Distance,
+            data = Training_Data)
+
+# the model is sinificant  as shown below
+summary(Price_Linear_model)# Showing the sumarry of the above linear model
+
+
+
+```
+
+**Doing the prediction with the test data and calculating root mean standard error**
+
+```{r}
+Price_predictions <- predict(Price_Linear_model, newdata = Testing_Data)
+#shows the summary of the predicted value and mean is close to the training value
+summary(Price_predictions) 
+
+#taking the co-relation between the predicted value and test data of price
+#and they are almost 60 % co-related.
+cor(Price_predictions, Testing_Data$Price)
+
+rmse(Testing_Data$Price, Price_predictions) #calculating the RSME
+
+```
+
+### Normalization
+
+**Standardization is a technique in which all the features are centered around zero and have roughly unit variance.**
+
+**Below lines of code using the scale function to normalize the data for selected numeric variable.** 
+
+```{r}
+
+
+# Normalising the data using the scale function
+
+Normalise_Traning_Data <- as.data.frame(scale(Training_Data
+                  [,c('Rooms','Price','Postcode','Propertycount','Distance')]))
+
+#shows the summary after normalising the data for diffrent numerical variable.
+summary(Normalise_Traning_Data)
+
+#Normalising the Testing_data
+  Normalise_Testing_Data<-as.data.frame(scale(Testing_Data
+                [,c('Rooms','Price','Postcode','Propertycount','Distance')]))
+
+#shows the summary after normalising the test data for diffrent numerical variable.
+summary(Normalise_Testing_Data)
+```
+
+**Performing the Linear model regression on the Normalize training data set**
+
+```{r}
+# Normalize linear model on traning data set
+Normalise_Price_Linear_model<-lm(Price ~ Rooms+Postcode+Propertycount+Distance,
+            data = Normalise_Traning_Data)
+## pridicting the value with predict function
+Normalise_Price_predictions <- predict(Normalise_Price_Linear_model, newdata = Normalise_Testing_Data)
+
+#shows the summary of the predicted value and mean is close to the training value
+summary(Normalise_Price_predictions) 
+
+#taking the co-relation between the predicted value and test data of price
+#and they are almost 60 % co-related.
+
+
+```
+
+**Checking the co-relation on the test data and the and the root mean square error so it is around 1.**
+
+**RMSE:** The root mean squared error. is the measures of the average difference between the predictions made by the model and the actual observations. So lower the RMSE, the more closely a mode we can predict the actual observations.
+
+```{r}
+#taking the co-relation between the predicted value and test data of price
+#and they are almost 60 % co-related.
+cor(Normalise_Price_predictions, Normalise_Testing_Data$Price)
+
+rmse(Normalise_Traning_Data$Price, Normalise_Price_predictions) #calculating the RSME
+```
+
+### Difference in prediction accuracy of Non normalize model and normalize model.
+
+**Non-normalized model**
+
+**we will be using the K-fold cross validation technique to for predicting the accuracy of the models.**
+
+**As we can see below the accuracy of the error for prediction is very hing so therefore the accuracy is**
+
+**very low**
+
+```{r}
+# creating the 10 fold that will divide the traning set.using the below glm function
+
+#glm is used to fit generalized linear models, specified by giving 
+#a symbolic description of 
+#the linear predictor and a description of the error distribution
+
+# crossvalidation for non-normalised data
+glm.Price_Linear_model<-glm(Price ~ Rooms+Postcode+Propertycount+Distance,
+            data = Training_Data)
+#cv-cross validation error using below function.K-FOLD of 10
+set.seed(101)
+cv.error<-cv.glm(Training_Data,glm.Price_Linear_model,K=10)
+cv.error$K # 10 Fold as per standard
+
+cv.error$delta#shows the prediction error which is very high and will have low accuracy
+
+```
+
+### **normalized model**
+
+**Similarly as above we will be using the K-fold cross validation technique to for predicting the accuracy of the models.**
+
+**As we can see below the accuracy of the error for prediction is very low so therefore the accuracy is**
+
+**will be** **high**.
+
+```{r}
+# crossvalidation for normalised data
+glm.Normalise_Price_Linear_model<-glm(Price ~ Rooms+Postcode+Propertycount+Distance,
+            data = Normalise_Traning_Data)
+#cv-cross validation error using below function.K-FOLD of 10
+set.seed(101)
+cv.error<-cv.glm(Normalise_Traning_Data,glm.Normalise_Price_Linear_model,K=10)
+cv.error$K # 10 Fold
+#shows the prediction error which is very low and will have high accuracy
+cv.error$delta
+
+```
+
+**So as shown above we can conclude that the normalized data model is more accurate the non-normalized model . As per K-fold validation technique where we took 10 folds as per result normalized data is gives better prediction accuracy with less error . Also we have seen that RSME of non-normalized linear model is very high but it is very less approximately to 1 for normalized data.**
+
+## Task C
+
+**Creating a new test data_frame for the graph of feature plot so that we can judge which predictor variable we need to select.**
+
+```{r}
+# crating the data set 
+test_data<-as.data.frame(housing.dataset_melbourne1)
+test_data$Suburb<- as.numeric(test_data$Suburb)
+test_data$Rooms<- as.numeric(test_data$Rooms)
+test_data$Price<- as.numeric(test_data$Price)
+test_data$Method<- as.numeric(test_data$Method)
+test_data$SellerG<- as.numeric(test_data$SellerG)
+test_data$Postcode<- as.numeric(test_data$Postcode)
+test_data$Regionname<- as.numeric(test_data$Regionname)
+test_data$Propertycount<- as.numeric(test_data$Propertycount)
+test_data$Distance<- as.numeric(test_data$Distance)
+test_data$CouncilArea<- as.numeric(test_data$CouncilArea)
+
+
+###### drawing the freature box plot for understanding the data for modeling
+ftr_Box_non_normalised<-featurePlot(x = test_data[,c(1,3,5:7,9:13)],
+      y = test_data$Type,plot = "box",strip=strip.custom(par.strip.text=list(cex=.7)), 
+      scales = list(x = list(relation="free"),y = list(relation="free")))
+
+ftr_Box_non_normalised # print the feature box plot
+
+###### drawing the freature density plot for understanding the data for modeling
+
+ftr_Density_non_normalised<-featurePlot(x = test_data[,c(1,3,5:7,9:13)],
+    y = test_data$Type,plot = "density",strip=strip.custom(par.strip.text=list(cex=.7)), 
+    scales = list(x = list(relation="free"),y = list(relation="free")))
+
+ftr_Density_non_normalised # print the feature box plot
+
+
+
+```
+
+### Changing the data types
+
+**Factorizing the classification data type and converting the required column to numeric data type also normalizing the required column data for modeling and numeric checking the proportion of the different type of houses and taking sample from the population for doing modeling.**
+
+```{r}
+
+
+#converting the type variable to factor as it is catigorical
+housing.dataset_melbourne1$Type <- factor(housing.dataset_melbourne1$Type,
+          levels = c("h","u", "t"), labels = c("House","Unit", "Townhouse"))
+
+
+#converting the data to numeric type
+housing.dataset_melbourne1$Suburb<- as.numeric(housing.dataset_melbourne1$Suburb)
+housing.dataset_melbourne1$Rooms<- as.numeric(housing.dataset_melbourne1$Rooms)
+housing.dataset_melbourne1$Price<- as.numeric(housing.dataset_melbourne1$Price)
+housing.dataset_melbourne1$Method<- as.numeric(housing.dataset_melbourne1$Method)
+housing.dataset_melbourne1$SellerG<- as.numeric(housing.dataset_melbourne1$SellerG)
+housing.dataset_melbourne1$Postcode<- as.numeric(housing.dataset_melbourne1$Postcode)
+housing.dataset_melbourne1$Regionname<- as.numeric(housing.dataset_melbourne1$Regionname)
+housing.dataset_melbourne1$Propertycount<- as.numeric(housing.dataset_melbourne1$Propertycount)
+housing.dataset_melbourne1$Distance<- as.numeric(housing.dataset_melbourne1$Distance)
+housing.dataset_melbourne1$CouncilArea<- as.numeric(housing.dataset_melbourne1$CouncilArea)
+
+
+#taking the sample from  the population and the performing the anaysis.
+#As data set is huge.
+ Sample_housing.dataset_melbourne1<-housing.dataset_melbourne1[sample
+                              (nrow(housing.dataset_melbourne1), 2000), ]
+ 
+
+prop.table(table(housing.dataset_melbourne1$Type))#checking the propor of diff type of houses
+```
+
+**Spiting th the data into Training and Test data**
+
+```{r}
+# spliting the data with createDataPartition for 80:20 ratio
+set.seed(101)
+
+TrainingVar <- createDataPartition(Sample_housing.dataset_melbourne1$Type, p= 0.8, list = F,times =1)
+#creating an new traning data set
+classification_Training_Data<-Sample_housing.dataset_melbourne1[TrainingVar,]
+
+
+#creating an new testing data set
+classification_Testing_Data<-Sample_housing.dataset_melbourne1[-TrainingVar,]
+
+#validating the training data by diffrent type of house
+table(classification_Training_Data$Type)
+head(classification_Training_Data)
+
+#validating the training data by diffrent types of house
+table(classification_Testing_Data$Type)
+
+```
+
+```{r}
+```
+
+### KNN- k-nearest neighbors
+
+**Is a non-parametric, supervised learning classifier that relies on closeness to produce classifications or predictions about the grouping of a single data point. It can be applied to classification or regression issues, although it is most frequently employed as a classification technique because it relies on the idea that comparable points can be discovered close to one another.**
+
+```{r}
+```
+
+Below are the code or training a KNN model
+
+```{r}
+# Classifing the traing criterea
+knn_training_ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+
+#Training the model with the defined predictor value which we have sleceted on the basis of 
+#above feature plot.
+#also  with preProcess function we are normalising the value of the colloumn as KNN improves
+#its performance when trained with normalized data.
+knn_fit_model <- train(Type ~Suburb+SellerG+CouncilArea+Price+Rooms+Method,
+                       data = classification_Training_Data, method = "knn",
+                     trControl = knn_training_ctrl,preProcess = c("center", "scale"),
+                     tuneLength = 10)
+
+knn_fit_model#detail about the model
+```
+
+**Calculating the accuracy of the Trained KNN model.**
+
+```{r}
+#Predicting the value of trained KNN with predict variable using the testing data
+knn_Prediction <- predict(knn_fit_model, newdata = classification_Testing_Data )
+class(classification_Testing_Data$Type)
+#predicted classes with associated statistics
+#basically  we can use it for understanding the accuracy of the trained model.
+confusionMatrix(knn_Prediction, (classification_Testing_Data$Type ))
+
+#As  shown above the model is have accuracy of arrornd 81%
+```
+
+### C50 Algorithm
+
+**It is supervised machine learning method C5.0 can produce a decision tree. This means that as the data is split at each node based on the rule at that node, the number of classes in each subset of the data will decrease until there is only one class left. C50 runs quickly since this process is easy to compute. C50 is sturdy. It can be used with categorical or numeric data [this example uses both categories]. Missing data values are also acceptable.**
+
+```{r}
+
+#Training the model with the defined predictor value which we have sleceted on the basis of 
+#above feature plot.
+#also  with preProcess function we are normalising the value of the colloumn as KNN improves
+#its performance when trained with normalized data.
+C5_fit_model <- train(Type~Suburb+SellerG+CouncilArea+Price+Rooms+Method,
+data = classification_Training_Data,preProcess = c("center", "scale"),method = "C5.0")
+
+#summary(C5_fit_model)#long output
+
+C5_prediction <- predict(C5_fit_model, newdata =  classification_Testing_Data ) 
+
+confusionMatrix(C5_prediction, classification_Testing_Data$Type )#predictinc the accuracy
+
+#As shown above C5  trained model has the accuracy of approx 82%
+
+```
+
+### ANN
+
+**An ANN is based on a collection of connected units or nodes called artificial neurons, and is modeled as the neurons in a human brain. Each connection, like the connection in a brain, can transmit a signal to other neurons. An artificial neuron receives signals then processes them aThe connections are called edges. Ann algorithm works on liner model.**
+
+```{r}
+
+# changing the date type of Type coloumn to as numeric from factor.
+classification_Training_Data$Type<-as.numeric(classification_Training_Data$Type)
+classification_Testing_Data$Type<-as.numeric(classification_Testing_Data$Type)
+
+#normalising the data
+classification_Training_Data<-as.data.frame(scale
+          (classification_Training_Data[,
+        c('Suburb','SellerG','CouncilArea','Price','Rooms','Method','Type')]))
+
+classification_Testing_Data<-as.data.frame(scale
+      (classification_Testing_Data[,
+      c('Suburb','SellerG','CouncilArea','Price','Rooms','Method','Type')]))
+
+# Ann algorithm to train our model on defined predivctor variable
+ANN_fit_model <- neuralnet(Type~Suburb+SellerG+CouncilArea+Price+Rooms+Method,
+  data = classification_Training_Data,linear.output = F,
+act.fct = "logistic",hidden = 5)
+
+
+#computing the model on the testing data and storing  the ANN result in the a variable 
+ANN_results <- compute(ANN_fit_model, classification_Testing_Data[1:6])
+
+#predicting the Strength  of ANN with below code
+predicted_strength <- ANN_results$net.result
+
+#calculating the co-relation on the basis of strength of the ANN model
+ cor(predicted_strength, classification_Testing_Data$Type)
+
+```
+
+### Conclusion:
+
+As shown above in all the all the three model KNN is having the accuracy of aground 80% where as C5 is have the accuracy of around 82% of the same data-set and ANN is having the co relation of around 0.4 which is low . So we can conclude that for the above sample data set provided **C5** classification has performed the best.
+
+C5 and KNN can work with both linear and categorical data but ANN works only for linear data .
+
+**ANN** has the ability work on complex data ,also it has the ability work on incomplete databut it also have a drawback that it needs more data to be accurate and also it is a black box we do not know how ANN generate the output.
+
+**C5** has the ability to do well in all problem it can handle missing data and it can get trained on few given training data set. where as its draw back are it can be biased in nature, small change in the training data can change significantly the decisions and accuracy.
+
+**KNN** it is based on **Euclidean distance & Manhattan distance** for classifying the data in to a particular type. it is the simplest and is fast also does not have assume any underlying data distribution. the draw backs are it uses more memory slow classification substantial inside is hard to determine. and few basic feature are missing which require more data pre-processing.
